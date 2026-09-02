@@ -1,4 +1,5 @@
-import { JWT } from "google-auth-library";
+import { getVercelOidcToken } from "@vercel/oidc";
+import { ExternalAccountClient } from "google-auth-library";
 
 export const DRIVE_FOLDER_ID =
   process.env["GOOGLE_DRIVE_FOLDER_ID"] || "1JsP821wxHi5argotqQLlqtB2ua8btgnJ";
@@ -6,27 +7,43 @@ export const DRIVE_FOLDER_ID =
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
+const DEFAULT_GCP_PROJECT_NUMBER = "460650857454";
+const DEFAULT_GCP_SERVICE_ACCOUNT_EMAIL =
+  "ichilov-or-app@project-4ca8f096-88fb-4f81-b60.iam.gserviceaccount.com";
+const DEFAULT_GCP_POOL_ID = "vercel-preview";
+const DEFAULT_GCP_PROVIDER_ID = "vercel-preview";
 
-let driveClient: JWT | undefined;
+type DriveAuthClient = NonNullable<ReturnType<typeof ExternalAccountClient.fromJSON>>;
 
-function getDriveClient(): JWT {
+let driveClient: DriveAuthClient | undefined;
+
+function getDriveClient(): DriveAuthClient {
   if (driveClient) return driveClient;
 
-  const email = process.env["GOOGLE_SERVICE_ACCOUNT_EMAIL"];
-  const privateKey = process.env["GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"]?.replace(/\\n/g, "\n");
-  const subject = process.env["GOOGLE_DRIVE_IMPERSONATED_USER"];
+  const projectNumber = process.env["GCP_PROJECT_NUMBER"] || DEFAULT_GCP_PROJECT_NUMBER;
+  const serviceAccountEmail =
+    process.env["GCP_SERVICE_ACCOUNT_EMAIL"] || DEFAULT_GCP_SERVICE_ACCOUNT_EMAIL;
+  const poolId = process.env["GCP_WORKLOAD_IDENTITY_POOL_ID"] || DEFAULT_GCP_POOL_ID;
+  const providerId =
+    process.env["GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID"] || DEFAULT_GCP_PROVIDER_ID;
+  const providerResource = `projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`;
+  const oidcAudience = `https://iam.googleapis.com/${providerResource}`;
 
-  if (!email || !privateKey) {
-    throw new Error("Google Drive service account is not configured");
-  }
-
-  driveClient = new JWT({
-    email,
-    key: privateKey,
+  const client = ExternalAccountClient.fromJSON({
+    type: "external_account",
+    audience: `//iam.googleapis.com/${providerResource}`,
+    subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+    token_url: "https://sts.googleapis.com/v1/token",
+    service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccountEmail}:generateAccessToken`,
     scopes: [DRIVE_SCOPE],
-    ...(subject ? { subject } : {}),
+    subject_token_supplier: {
+      getSubjectToken: () => getVercelOidcToken({ audience: oidcAudience }),
+    },
   });
-  return driveClient;
+  if (!client) throw new Error("Google Drive OIDC authentication is not configured");
+
+  driveClient = client;
+  return client;
 }
 
 async function driveFetch(input: string, init: RequestInit = {}): Promise<Response> {
