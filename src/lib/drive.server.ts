@@ -1,6 +1,45 @@
-export const DRIVE_FOLDER_ID = "1JsP821wxHi5argotqQLlqtB2ua8btgnJ";
+import { JWT } from "google-auth-library";
 
-const GATEWAY = "https://connector-gateway.lovable.dev/google_drive";
+export const DRIVE_FOLDER_ID =
+  process.env["GOOGLE_DRIVE_FOLDER_ID"] || "1JsP821wxHi5argotqQLlqtB2ua8btgnJ";
+
+const DRIVE_API = "https://www.googleapis.com/drive/v3";
+const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
+
+let driveClient: JWT | undefined;
+
+function getDriveClient(): JWT {
+  if (driveClient) return driveClient;
+
+  const email = process.env["GOOGLE_SERVICE_ACCOUNT_EMAIL"];
+  const privateKey = process.env["GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"]?.replace(/\\n/g, "\n");
+  const subject = process.env["GOOGLE_DRIVE_IMPERSONATED_USER"];
+
+  if (!email || !privateKey) {
+    throw new Error("Google Drive service account is not configured");
+  }
+
+  driveClient = new JWT({
+    email,
+    key: privateKey,
+    scopes: [DRIVE_SCOPE],
+    ...(subject ? { subject } : {}),
+  });
+  return driveClient;
+}
+
+async function driveFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const accessToken = await getDriveClient().getAccessToken();
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${accessToken}`);
+  const url = new URL(input);
+  url.searchParams.set("supportsAllDrives", "true");
+  if (!init.method && url.pathname.endsWith("/drive/v3/files")) {
+    url.searchParams.set("includeItemsFromAllDrives", "true");
+  }
+  return fetch(url, { ...init, headers });
+}
 
 export type DriveFile = {
   id: string;
@@ -36,16 +75,6 @@ function mimeForName(name: string): string {
   return "application/pdf";
 }
 
-function driveHeaders() {
-  const lovableKey = process.env["LOVABLE_API_KEY"];
-  const driveKey = process.env["GOOGLE_DRIVE_API_KEY"];
-  if (!lovableKey || !driveKey) throw new Error("Google Drive connection is not configured");
-  return {
-    Authorization: `Bearer ${lovableKey}`,
-    "X-Connection-Api-Key": driveKey,
-  };
-}
-
 export async function listFolderPdfs(): Promise<DriveFile[]> {
   const params = new URLSearchParams({
     q: `'${DRIVE_FOLDER_ID}' in parents and trashed=false`,
@@ -53,7 +82,7 @@ export async function listFolderPdfs(): Promise<DriveFile[]> {
     pageSize: "200",
     orderBy: "name",
   });
-  const res = await fetch(`${GATEWAY}/drive/v3/files?${params}`, { headers: driveHeaders() });
+  const res = await driveFetch(`${DRIVE_API}/files?${params}`);
   if (!res.ok) {
     const body = await res.text();
     console.error(`Drive list failed [${res.status}]: ${body}`);
@@ -64,9 +93,7 @@ export async function listFolderPdfs(): Promise<DriveFile[]> {
 }
 
 export async function downloadFileBase64(fileId: string): Promise<string> {
-  const res = await fetch(`${GATEWAY}/drive/v3/files/${fileId}?alt=media`, {
-    headers: driveHeaders(),
-  });
+  const res = await driveFetch(`${DRIVE_API}/files/${fileId}?alt=media`);
   if (!res.ok) {
     const body = await res.text();
     console.error(`Drive download failed [${res.status}]: ${body}`);
@@ -87,7 +114,7 @@ export async function uploadFileToFolderId(
   base64: string,
   mimeType: string,
 ): Promise<DriveFile> {
-  const boundary = `lovable-${crypto.randomUUID()}`;
+  const boundary = `drive-${crypto.randomUUID()}`;
   const metadata = JSON.stringify({
     name,
     parents: [folderId],
@@ -107,14 +134,11 @@ export async function uploadFileToFolderId(
   body.set(bytes, head.length);
   body.set(tail, head.length + bytes.length);
 
-  const res = await fetch(
-    `${GATEWAY}/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,modifiedTime,webViewLink,size`,
+  const res = await driveFetch(
+    `${DRIVE_UPLOAD_API}/files?uploadType=multipart&fields=id,name,mimeType,modifiedTime,webViewLink,size`,
     {
       method: "POST",
-      headers: {
-        ...driveHeaders(),
-        "Content-Type": `multipart/related; boundary=${boundary}`,
-      },
+      headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
       body,
     },
   );
@@ -136,9 +160,9 @@ export async function uploadPdfToFolderId(
 }
 
 export async function trashFile(fileId: string): Promise<void> {
-  const res = await fetch(`${GATEWAY}/drive/v3/files/${fileId}`, {
+  const res = await driveFetch(`${DRIVE_API}/files/${fileId}`, {
     method: "PATCH",
-    headers: { ...driveHeaders(), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ trashed: true }),
   });
   if (!res.ok) {
@@ -149,9 +173,9 @@ export async function trashFile(fileId: string): Promise<void> {
 }
 
 export async function renameDriveFile(fileId: string, name: string): Promise<void> {
-  const res = await fetch(`${GATEWAY}/drive/v3/files/${fileId}`, {
+  const res = await driveFetch(`${DRIVE_API}/files/${fileId}`, {
     method: "PATCH",
-    headers: { ...driveHeaders(), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
   });
   if (!res.ok) {
@@ -184,7 +208,7 @@ async function findFolderId(name: string): Promise<string | null> {
     fields: "files(id,name)",
     pageSize: "10",
   });
-  const res = await fetch(`${GATEWAY}/drive/v3/files?${params}`, { headers: driveHeaders() });
+  const res = await driveFetch(`${DRIVE_API}/files?${params}`);
   if (!res.ok) {
     const body = await res.text();
     console.error(`Drive folder lookup failed [${res.status}]: ${body}`);
@@ -198,9 +222,9 @@ export async function ensureCategoryFolder(category: Category): Promise<string> 
   const name = CATEGORIES[category];
   const existing = await findFolderId(name);
   if (existing) return existing;
-  const res = await fetch(`${GATEWAY}/drive/v3/files?fields=id`, {
+  const res = await driveFetch(`${DRIVE_API}/files?fields=id`, {
     method: "POST",
-    headers: { ...driveHeaders(), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       name,
       mimeType: "application/vnd.google-apps.folder",
@@ -222,7 +246,7 @@ export async function listAllFilesIn(folderId: string): Promise<DriveFile[]> {
     pageSize: "200",
     orderBy: "name",
   });
-  const res = await fetch(`${GATEWAY}/drive/v3/files?${params}`, { headers: driveHeaders() });
+  const res = await driveFetch(`${DRIVE_API}/files?${params}`);
   if (!res.ok) {
     const body = await res.text();
     console.error(`Drive list failed [${res.status}]: ${body}`);
@@ -256,7 +280,7 @@ async function listPdfsIn(folderId: string): Promise<DriveFile[]> {
     pageSize: "200",
     orderBy: "name",
   });
-  const res = await fetch(`${GATEWAY}/drive/v3/files?${params}`, { headers: driveHeaders() });
+  const res = await driveFetch(`${DRIVE_API}/files?${params}`);
   if (!res.ok) {
     const body = await res.text();
     console.error(`Drive list failed [${res.status}]: ${body}`);
@@ -316,7 +340,7 @@ export async function getVideosMetadataFile(): Promise<{ id: string | null; link
     fields: "files(id,modifiedTime)",
     pageSize: "10",
   });
-  const res = await fetch(`${GATEWAY}/drive/v3/files?${params}`, { headers: driveHeaders() });
+  const res = await driveFetch(`${DRIVE_API}/files?${params}`);
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`metadata lookup failed [${res.status}]: ${body}`);
@@ -324,7 +348,7 @@ export async function getVideosMetadataFile(): Promise<{ id: string | null; link
   const json = (await res.json()) as { files?: Array<{ id: string; modifiedTime: string }> };
   const file = json.files?.[0];
   if (!file) return { id: null, links: [] };
-  const content = await fetch(`${GATEWAY}/drive/v3/files/${file.id}?alt=media`, { headers: driveHeaders() });
+  const content = await driveFetch(`${DRIVE_API}/files/${file.id}?alt=media`);
   if (!content.ok) {
     const body = await content.text();
     throw new Error(`metadata read failed [${content.status}]: ${body}`);
@@ -343,9 +367,9 @@ export async function saveVideosMetadata(links: VideoLink[]): Promise<{ id: stri
   const body = JSON.stringify({ links }, null, 2);
   const bytes = new TextEncoder().encode(body);
   if (existing.id) {
-    const res = await fetch(`${GATEWAY}/upload/drive/v3/files/${existing.id}?uploadType=media`, {
+    const res = await driveFetch(`${DRIVE_UPLOAD_API}/files/${existing.id}?uploadType=media`, {
       method: "PATCH",
-      headers: { ...driveHeaders(), "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body: bytes,
     });
     if (!res.ok) {
@@ -354,7 +378,7 @@ export async function saveVideosMetadata(links: VideoLink[]): Promise<{ id: stri
     }
     return { id: existing.id };
   }
-  const boundary = `lovable-${crypto.randomUUID()}`;
+  const boundary = `drive-${crypto.randomUUID()}`;
   const metadata = JSON.stringify({ name: "videos.json", parents: [folderId], mimeType: "application/json" });
   const head = new TextEncoder().encode(
     `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n`,
@@ -364,9 +388,9 @@ export async function saveVideosMetadata(links: VideoLink[]): Promise<{ id: stri
   payload.set(head, 0);
   payload.set(bytes, head.length);
   payload.set(tail, head.length + bytes.length);
-  const res = await fetch(`${GATEWAY}/upload/drive/v3/files?uploadType=multipart&fields=id`, {
+  const res = await driveFetch(`${DRIVE_UPLOAD_API}/files?uploadType=multipart&fields=id`, {
     method: "POST",
-    headers: { ...driveHeaders(), "Content-Type": `multipart/related; boundary=${boundary}` },
+    headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
     body: payload,
   });
   if (!res.ok) {
@@ -401,7 +425,7 @@ export async function listSubfolders(category: Category): Promise<DriveFolder[]>
     pageSize: "200",
     orderBy: "name",
   });
-  const res = await fetch(`${GATEWAY}/drive/v3/files?${params}`, { headers: driveHeaders() });
+  const res = await driveFetch(`${DRIVE_API}/files?${params}`);
   if (!res.ok) {
     const body = await res.text();
     console.error(`Drive subfolder list failed [${res.status}]: ${body}`);
@@ -415,9 +439,9 @@ export async function createSubfolder(category: Category, name: string): Promise
   const parentId = await ensureCategoryFolder(category);
   const existing = (await listSubfolders(category)).find((f) => f.name === name);
   if (existing) return existing;
-  const res = await fetch(`${GATEWAY}/drive/v3/files?fields=id,name`, {
+  const res = await driveFetch(`${DRIVE_API}/files?fields=id,name`, {
     method: "POST",
-    headers: { ...driveHeaders(), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       name,
       mimeType: "application/vnd.google-apps.folder",
@@ -444,7 +468,7 @@ export async function listFoldersIn(parentId: string): Promise<DriveFolder[]> {
     pageSize: "200",
     orderBy: "name",
   });
-  const res = await fetch(`${GATEWAY}/drive/v3/files?${params}`, { headers: driveHeaders() });
+  const res = await driveFetch(`${DRIVE_API}/files?${params}`);
   if (!res.ok) {
     const body = await res.text();
     console.error(`Drive subfolder list failed [${res.status}]: ${body}`);
@@ -458,9 +482,9 @@ export async function listFoldersIn(parentId: string): Promise<DriveFolder[]> {
 export async function createFolderIn(parentId: string, name: string): Promise<DriveFolder> {
   const existing = (await listFoldersIn(parentId)).find((f) => f.name === name);
   if (existing) return existing;
-  const res = await fetch(`${GATEWAY}/drive/v3/files?fields=id,name`, {
+  const res = await driveFetch(`${DRIVE_API}/files?fields=id,name`, {
     method: "POST",
-    headers: { ...driveHeaders(), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       name,
       mimeType: "application/vnd.google-apps.folder",
@@ -506,4 +530,3 @@ export async function listCategoryPdfsDeep(
   }
   return out;
 }
-
