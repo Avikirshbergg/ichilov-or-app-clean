@@ -31,7 +31,7 @@ function getDriveClient(): DriveAuthClient {
 
   const client = ExternalAccountClient.fromJSON({
     type: "external_account",
-    audience: oidcAudience,
+    audience: `//iam.googleapis.com/${providerResource}`,
     subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
     token_url: "https://sts.googleapis.com/v1/token",
     service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccountEmail}:generateAccessToken`,
