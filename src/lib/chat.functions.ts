@@ -20,7 +20,15 @@ function driveDiagnostic(error: unknown): string {
 
   if (raw.includes("drive_oidc_missing")) return " קוד בדיקה: DRIVE_OIDC_MISSING";
   if (raw.includes("drive_oidc_exchange")) return " קוד בדיקה: DRIVE_OIDC_EXCHANGE";
+  if (raw.includes("drive_oidc_issuer_global")) return " קוד בדיקה: DRIVE_OIDC_ISSUER_GLOBAL";
+  if (raw.includes("drive_oidc_issuer_other")) return " קוד בדיקה: DRIVE_OIDC_ISSUER_OTHER";
+  if (raw.includes("drive_oidc_subject_mismatch")) return " קוד בדיקה: DRIVE_OIDC_SUBJECT_MISMATCH";
+  if (raw.includes("drive_oidc_audience_mismatch")) return " קוד בדיקה: DRIVE_OIDC_AUDIENCE_MISMATCH";
+  if (raw.includes("drive_oidc_invalid")) return " קוד בדיקה: DRIVE_OIDC_INVALID";
   if (raw.includes("drive_oidc_unknown")) return " קוד בדיקה: DRIVE_OIDC_UNKNOWN";
+  if (raw.includes("issuer")) return " קוד בדיקה: DRIVE_STS_ISSUER";
+  if (raw.includes("invalid_grant")) return " קוד בדיקה: DRIVE_STS_GRANT";
+  if (raw.includes("401")) return " קוד בדיקה: DRIVE_STS_401";
   if (raw.includes("audience") || raw.includes("invalid_target")) return " קוד בדיקה: DRIVE_AUDIENCE";
   if (raw.includes("permission") || raw.includes("forbidden") || raw.includes("403")) {
     return " קוד בדיקה: DRIVE_PERMISSION";
