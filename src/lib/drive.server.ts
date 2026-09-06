@@ -14,8 +14,9 @@ const DEFAULT_GCP_POOL_ID = "vercel-preview";
 const DEFAULT_GCP_PROVIDER_ID = "vercel-preview";
 
 async function getGoogleSubjectToken(audience: string): Promise<string> {
+  let token: string;
   try {
-    return await getVercelOidcToken({ audience });
+    token = await getVercelOidcToken({ audience });
   } catch (error) {
     const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
     if (message.includes("x-vercel-oidc-token") || message.includes("header is missing")) {
@@ -26,6 +27,32 @@ async function getGoogleSubjectToken(audience: string): Promise<string> {
     }
     throw new Error("DRIVE_OIDC_UNKNOWN", { cause: error });
   }
+
+  if (process.env["VERCEL_ENV"] === "preview") {
+    try {
+      const encodedPayload = token.split(".")[1];
+      if (!encodedPayload) throw new Error("invalid JWT");
+      const claims = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as {
+        iss?: string;
+        sub?: string;
+        aud?: string | string[];
+      };
+      const expectedIssuer = "https://oidc.vercel.com/avi-9682";
+      const expectedSubject =
+        "owner:avi-9682:project:ichilov-or-app-clean:environment:preview";
+      const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+
+      if (claims.iss === "https://oidc.vercel.com") throw new Error("DRIVE_OIDC_ISSUER_GLOBAL");
+      if (claims.iss !== expectedIssuer) throw new Error("DRIVE_OIDC_ISSUER_OTHER");
+      if (claims.sub !== expectedSubject) throw new Error("DRIVE_OIDC_SUBJECT_MISMATCH");
+      if (!audiences.includes(audience)) throw new Error("DRIVE_OIDC_AUDIENCE_MISMATCH");
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("DRIVE_OIDC_")) throw error;
+      throw new Error("DRIVE_OIDC_INVALID", { cause: error });
+    }
+  }
+
+  return token;
 }
 
 type DriveAuthClient = NonNullable<ReturnType<typeof ExternalAccountClient.fromJSON>>;
