@@ -71,7 +71,10 @@ function driveErrorDetails(error: unknown): { raw: string; stage: string } {
 
 function driveDiagnostic(error: unknown): string {
   const { raw, stage } = driveErrorDetails(error);
-  console.error("[chat] Google Drive access failed", error);
+  console.error("[chat] Google Drive access failed", {
+    stage,
+    details: raw.slice(0, 500),
+  });
   if (process.env["VERCEL_ENV"] !== "preview") return "";
 
   if (raw.includes("drive_oidc_missing")) return " קוד בדיקה: DRIVE_OIDC_MISSING";
