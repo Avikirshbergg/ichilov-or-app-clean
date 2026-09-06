@@ -13,6 +13,24 @@ const schema = z.object({
     .max(40),
 });
 
+function driveDiagnostic(error: unknown): string {
+  const raw = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  console.error("[chat] Google Drive access failed", error);
+  if (process.env["VERCEL_ENV"] !== "preview") return "";
+
+  if (raw.includes("audience") || raw.includes("invalid_target")) return " קוד בדיקה: DRIVE_AUDIENCE";
+  if (raw.includes("permission") || raw.includes("forbidden") || raw.includes("403")) {
+    return " קוד בדיקה: DRIVE_PERMISSION";
+  }
+  if (raw.includes("subject") || raw.includes("principal") || raw.includes("impersonat")) {
+    return " קוד בדיקה: DRIVE_IDENTITY";
+  }
+  if (raw.includes("oidc") || raw.includes("token") || raw.includes("credential") || raw.includes("401")) {
+    return " קוד בדיקה: DRIVE_AUTH";
+  }
+  return " קוד בדיקה: DRIVE_CONNECTION";
+}
+
 export const listProcedures = createServerFn({ method: "GET" }).handler(async () => {
   const { listAllPdfs } = await import("./drive.server");
   const files = await listAllPdfs();
@@ -33,7 +51,15 @@ export const sendChatMessage = createServerFn({ method: "POST" })
     const { logQuestion } = await import("./analytics.server");
     const lastUser = [...data.messages].reverse().find((m) => m.role === "user")?.content ?? "";
 
-    const files = onlyPdfs(await listAllPdfs());
+    let files;
+    try {
+      files = onlyPdfs(await listAllPdfs());
+    } catch (error) {
+      return {
+        reply: `נכשלה הגישה לתיקיית הנהלים.${driveDiagnostic(error)}`,
+        sources: [] as Array<{ name: string; url: string }>,
+      };
+    }
     if (files.length === 0) {
       await logQuestion({ question: lastUser, answered: false, surface: "chat" });
       return { reply: "לא נמצאו נהלים בתיקייה. נא לפנות למנהלי חדר הניתוח לקבלת תשובה.", sources: [] as Array<{ name: string; url: string }> };
