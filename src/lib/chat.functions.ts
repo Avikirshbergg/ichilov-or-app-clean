@@ -18,6 +18,9 @@ function driveDiagnostic(error: unknown): string {
   console.error("[chat] Google Drive access failed", error);
   if (process.env["VERCEL_ENV"] !== "preview") return "";
 
+  if (raw.includes("drive_oidc_missing")) return " קוד בדיקה: DRIVE_OIDC_MISSING";
+  if (raw.includes("drive_oidc_exchange")) return " קוד בדיקה: DRIVE_OIDC_EXCHANGE";
+  if (raw.includes("drive_oidc_unknown")) return " קוד בדיקה: DRIVE_OIDC_UNKNOWN";
   if (raw.includes("audience") || raw.includes("invalid_target")) return " קוד בדיקה: DRIVE_AUDIENCE";
   if (raw.includes("permission") || raw.includes("forbidden") || raw.includes("403")) {
     return " קוד בדיקה: DRIVE_PERMISSION";
