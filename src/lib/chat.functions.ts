@@ -37,13 +37,15 @@ function driveErrorDetails(error: unknown): { raw: string; stage: string } {
     }
 
     const config = asRecord(record["config"]);
-    if (typeof config?.["url"] === "string") urls.push(config["url"]);
+    if (config?.["url"] !== undefined) urls.push(String(config["url"]));
 
     const response = asRecord(record["response"]);
     if (response) {
       if (typeof response["status"] === "number") parts.push(String(response["status"]));
       const responseConfig = asRecord(response["config"]);
-      if (typeof responseConfig?.["url"] === "string") urls.push(responseConfig["url"]);
+      if (responseConfig?.["url"] !== undefined) urls.push(String(responseConfig["url"]));
+      const request = asRecord(response["request"]);
+      if (request?.["responseURL"] !== undefined) urls.push(String(request["responseURL"]));
       const data = asRecord(response["data"]);
       if (data) {
         for (const key of ["error", "error_description", "message", "status"]) {
