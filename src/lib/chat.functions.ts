@@ -13,8 +13,62 @@ const schema = z.object({
     .max(40),
 });
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function driveErrorDetails(error: unknown): { raw: string; stage: string } {
+  const parts: string[] = [];
+  const urls: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  for (let depth = 0; current && depth < 6 && !seen.has(current); depth += 1) {
+    seen.add(current);
+    const record = asRecord(current);
+    if (!record) {
+      parts.push(String(current));
+      break;
+    }
+
+    for (const key of ["name", "message", "code", "status", "statusText"]) {
+      const value = record[key];
+      if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+    }
+
+    const config = asRecord(record["config"]);
+    if (typeof config?.["url"] === "string") urls.push(config["url"]);
+
+    const response = asRecord(record["response"]);
+    if (response) {
+      if (typeof response["status"] === "number") parts.push(String(response["status"]));
+      const responseConfig = asRecord(response["config"]);
+      if (typeof responseConfig?.["url"] === "string") urls.push(responseConfig["url"]);
+      const data = asRecord(response["data"]);
+      if (data) {
+        for (const key of ["error", "error_description", "message", "status"]) {
+          const value = data[key];
+          if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+        }
+      }
+    }
+
+    current = record["cause"];
+  }
+
+  const joinedUrls = urls.join(" ").toLowerCase();
+  const stage = joinedUrls.includes("sts.googleapis.com")
+    ? "sts"
+    : joinedUrls.includes("iamcredentials.googleapis.com")
+      ? "iam"
+      : joinedUrls.includes("googleapis.com/drive")
+        ? "drive"
+        : "unknown";
+  return { raw: parts.join(" ").toLowerCase(), stage };
+}
+
 function driveDiagnostic(error: unknown): string {
-  const raw = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  const { raw, stage } = driveErrorDetails(error);
   console.error("[chat] Google Drive access failed", error);
   if (process.env["VERCEL_ENV"] !== "preview") return "";
 
@@ -26,9 +80,19 @@ function driveDiagnostic(error: unknown): string {
   if (raw.includes("drive_oidc_audience_mismatch")) return " קוד בדיקה: DRIVE_OIDC_AUDIENCE_MISMATCH";
   if (raw.includes("drive_oidc_invalid")) return " קוד בדיקה: DRIVE_OIDC_INVALID";
   if (raw.includes("drive_oidc_unknown")) return " קוד בדיקה: DRIVE_OIDC_UNKNOWN";
+  if (raw.includes("invalid jwt signature") || raw.includes("signature verification")) {
+    return " קוד בדיקה: DRIVE_STS_SIGNATURE";
+  }
+  if (raw.includes("attribute condition")) return " קוד בדיקה: DRIVE_STS_ATTRIBUTE";
+  if (raw.includes("subject_token") || raw.includes("subject token")) {
+    return " קוד בדיקה: DRIVE_STS_SUBJECT_TOKEN";
+  }
   if (raw.includes("issuer")) return " קוד בדיקה: DRIVE_STS_ISSUER";
   if (raw.includes("invalid_grant")) return " קוד בדיקה: DRIVE_STS_GRANT";
-  if (raw.includes("401")) return " קוד בדיקה: DRIVE_STS_401";
+  if (raw.includes("401") && stage === "sts") return " קוד בדיקה: DRIVE_STS_401";
+  if (raw.includes("401") && stage === "iam") return " קוד בדיקה: DRIVE_IAM_401";
+  if (raw.includes("401") && stage === "drive") return " קוד בדיקה: DRIVE_API_401";
+  if (raw.includes("401")) return " קוד בדיקה: DRIVE_401_UNKNOWN";
   if (raw.includes("audience") || raw.includes("invalid_target")) return " קוד בדיקה: DRIVE_AUDIENCE";
   if (raw.includes("permission") || raw.includes("forbidden") || raw.includes("403")) {
     return " קוד בדיקה: DRIVE_PERMISSION";
