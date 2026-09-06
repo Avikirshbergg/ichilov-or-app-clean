@@ -13,6 +13,21 @@ const DEFAULT_GCP_SERVICE_ACCOUNT_EMAIL =
 const DEFAULT_GCP_POOL_ID = "vercel-preview";
 const DEFAULT_GCP_PROVIDER_ID = "vercel-preview";
 
+async function getGoogleSubjectToken(audience: string): Promise<string> {
+  try {
+    return await getVercelOidcToken({ audience });
+  } catch (error) {
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    if (message.includes("x-vercel-oidc-token") || message.includes("header is missing")) {
+      throw new Error("DRIVE_OIDC_MISSING", { cause: error });
+    }
+    if (message.includes("failed to exchange token")) {
+      throw new Error("DRIVE_OIDC_EXCHANGE", { cause: error });
+    }
+    throw new Error("DRIVE_OIDC_UNKNOWN", { cause: error });
+  }
+}
+
 type DriveAuthClient = NonNullable<ReturnType<typeof ExternalAccountClient.fromJSON>>;
 
 let driveClient: DriveAuthClient | undefined;
@@ -37,7 +52,7 @@ function getDriveClient(): DriveAuthClient {
     service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccountEmail}:generateAccessToken`,
     scopes: [DRIVE_SCOPE],
     subject_token_supplier: {
-      getSubjectToken: () => getVercelOidcToken({ audience: oidcAudience }),
+      getSubjectToken: () => getGoogleSubjectToken(oidcAudience),
     },
   });
   if (!client) throw new Error("Google Drive OIDC authentication is not configured");
