@@ -90,8 +90,9 @@ function getDriveClient(): DriveAuthClient {
 
 async function driveFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const accessToken = await getDriveClient().getAccessToken();
+  if (!accessToken.token) throw new Error("Google Drive access token is missing");
   const headers = new Headers(init.headers);
-  headers.set("Authorization", `Bearer ${accessToken}`);
+  headers.set("Authorization", `Bearer ${accessToken.token}`);
   const url = new URL(input);
   url.searchParams.set("supportsAllDrives", "true");
   if (!init.method && url.pathname.endsWith("/drive/v3/files")) {
