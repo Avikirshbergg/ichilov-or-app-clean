@@ -13,48 +13,6 @@ const DEFAULT_GCP_SERVICE_ACCOUNT_EMAIL =
 const DEFAULT_GCP_POOL_ID = "vercel-preview";
 const DEFAULT_GCP_PROVIDER_ID = "vercel-preview";
 
-async function getGoogleSubjectToken(audience: string): Promise<string> {
-  let token: string;
-  try {
-    token = await getVercelOidcToken({ audience });
-  } catch (error) {
-    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-    if (message.includes("x-vercel-oidc-token") || message.includes("header is missing")) {
-      throw new Error("DRIVE_OIDC_MISSING", { cause: error });
-    }
-    if (message.includes("failed to exchange token")) {
-      throw new Error("DRIVE_OIDC_EXCHANGE", { cause: error });
-    }
-    throw new Error("DRIVE_OIDC_UNKNOWN", { cause: error });
-  }
-
-  if (process.env["VERCEL_ENV"] === "preview") {
-    try {
-      const encodedPayload = token.split(".")[1];
-      if (!encodedPayload) throw new Error("invalid JWT");
-      const claims = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as {
-        iss?: string;
-        sub?: string;
-        aud?: string | string[];
-      };
-      const expectedIssuer = "https://oidc.vercel.com/avi-9682";
-      const expectedSubject =
-        "owner:avi-9682:project:ichilov-or-app-clean:environment:preview";
-      const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-
-      if (claims.iss === "https://oidc.vercel.com") throw new Error("DRIVE_OIDC_ISSUER_GLOBAL");
-      if (claims.iss !== expectedIssuer) throw new Error("DRIVE_OIDC_ISSUER_OTHER");
-      if (claims.sub !== expectedSubject) throw new Error("DRIVE_OIDC_SUBJECT_MISMATCH");
-      if (!audiences.includes(audience)) throw new Error("DRIVE_OIDC_AUDIENCE_MISMATCH");
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith("DRIVE_OIDC_")) throw error;
-      throw new Error("DRIVE_OIDC_INVALID", { cause: error });
-    }
-  }
-
-  return token;
-}
-
 type DriveAuthClient = NonNullable<ReturnType<typeof ExternalAccountClient.fromJSON>>;
 
 let driveClient: DriveAuthClient | undefined;
@@ -79,7 +37,7 @@ function getDriveClient(): DriveAuthClient {
     service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccountEmail}:generateAccessToken`,
     scopes: [DRIVE_SCOPE],
     subject_token_supplier: {
-      getSubjectToken: () => getGoogleSubjectToken(oidcAudience),
+      getSubjectToken: () => getVercelOidcToken({ audience: oidcAudience }),
     },
   });
   if (!client) throw new Error("Google Drive OIDC authentication is not configured");
